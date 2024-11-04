@@ -1,0 +1,11 @@
+CC = gcc
+CFLAGS = -Wall -g
+TARGET = contacts_app
+
+all: $(TARGET)
+
+$(TARGET): main_3.c contact_3.c
+	$(CC) $(CFLAGS) -o $(TARGET) main_3.c contact_3.c
+
+clean:
+	rm -f $(TARGET) * .o

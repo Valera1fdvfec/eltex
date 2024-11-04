@@ -1,0 +1,18 @@
+# Компилятор и флаги
+CC = gcc
+CFLAGS = -Wall -Wextra -g
+
+# Имя исполняемого файла
+TARGET = calculator
+
+# Исходные и объектные файлы
+SRCS = main_2.c calculator_2.c
+
+# Правило сборки исполняемого файла
+$(TARGET): $(SRCS)
+	$(CC) $(CFLAGS) -o $(TARGET) $(SRCS)
+
+# Правило очистки скомпилированных файлов
+.PHONY: clean
+clean:
+	rm -f $(TARGET)
