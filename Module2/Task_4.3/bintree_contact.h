@@ -42,4 +42,5 @@ TreeNode* balance_tree(TreeNode *root);
 int save_contacts(TreeNode *root);
 TreeNode* load_contacts();
 void inorder_traversal(TreeNode *root, void (*func)(Contact *));
+void print_tree(TreeNode *root, int space);
 #endif // CONTACT_H

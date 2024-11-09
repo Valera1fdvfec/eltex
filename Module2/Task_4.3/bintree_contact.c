@@ -78,7 +78,7 @@ TreeNode* delete_contact(TreeNode *root, const char *surname) {
     return root;
 }
 
-// Сохранение контактов в файл (inorder traversal)
+// Сохранение контактов в файл
 int save_contacts(TreeNode *root) {
     FILE *file = fopen("updated_contacts.txt", "w");
     if (file == NULL) {
@@ -151,9 +151,29 @@ TreeNode* build_balanced_tree(Contact arr[], int start, int end) {
 
 TreeNode* balance_tree(TreeNode *root) {
     int n = 0;
-    Contact arr[100]; // массив для хранения элементов дерева
+    Contact arr[5000]; // массив для хранения элементов дерева
     store_inorder(root, arr, &n);
 
     free_tree(root); // освобождаем старое дерево
     return build_balanced_tree(arr, 0, n - 1);
+}
+
+void print_tree(TreeNode *root, int space) {
+
+    if (root == NULL) return;
+
+    // Увеличение расстояния между уровнями
+    space += 5;
+
+    // Печать правого поддерева
+    print_tree(root->right, space);
+
+    // Печать текущего узла
+    printf("\n");
+    for (int i = 5; i < space; i++)
+        printf(" ");
+    printf("%s\n", root->contact.surname);
+
+    // Печать левого поддерева
+    print_tree(root->left, space);
 }

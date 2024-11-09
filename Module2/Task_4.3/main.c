@@ -169,6 +169,7 @@ int main() {
             case 6:
                 root = balance_tree(root);
                 printf("Дерево сбалансировано.\n");
+		print_tree(root, 0);
                 save_contacts(root);
                 break;
             default:
