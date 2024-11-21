@@ -13,7 +13,7 @@
 
 // Структура для операций над семафором
 extern struct sembuf sem_lock;
-extern struct sembuf sem_unlock;
+extern struct sembuf sem_unlock[2];
 
 // Функции управления семафорами
 void error_exit(const char *msg);

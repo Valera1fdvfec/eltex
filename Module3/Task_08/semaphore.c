@@ -2,8 +2,7 @@
 
 // Операции над семафором
 struct sembuf sem_lock = {0, -1, 0};  // Блокировка
-struct sembuf sem_unlock = {0, 1, 0}; // Разблокировка
-
+struct sembuf sem_unlock[2] = {{0, 0, 0}, {0, 1, 0}};
 // Функция для обработки ошибок
 void error_exit(const char *msg) {
     perror(msg);
@@ -44,7 +43,7 @@ void lock_semaphore(int semid) {
 
 // Разблокировка семафора
 void unlock_semaphore(int semid) {
-    if (semop(semid, &sem_unlock, 1) == -1) {
+    if (semop(semid, sem_unlock, 2) == -1) {
         error_exit("Ошибка semop (разблокировка)");
     }
 }
