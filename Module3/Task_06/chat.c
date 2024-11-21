@@ -12,15 +12,11 @@ void send_message(int msgid, long msg_type, const char *text) {
     }
 }
 
-void receive_message(int msgid, long msg_type, char *buffer) {
-    Message message;
-
-    if (msgrcv(msgid, &message, sizeof(message.text), msg_type, 0) == -1) {
+void receive_message(int msgid, long msg_type, Message *message) {
+    if (msgrcv(msgid, message, sizeof(message->text), msg_type, 0) == -1) {
         perror("Ошибка получения сообщения");
         exit(1);
     }
-    strncpy(buffer, message.text, MAX_TEXT - 1);
-    buffer[MAX_TEXT - 1] = '\0';
 }
 
 void cleanup_queue(int msgid) {

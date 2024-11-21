@@ -11,16 +11,15 @@
 
 #define QUEUE_KEY 1234
 #define MAX_TEXT 128
-#define END_PRIORITY 10
 
 typedef struct {
-    long msg_type; // Тип сообщения
+    long msg_type; // Тип сообщения (приоритет)
     char text[MAX_TEXT]; // Текст сообщения
 } Message;
 
 // Функции для работы с очередью
 void send_message(int msgid, long msg_type, const char *text);
-void receive_message(int msgid, long msg_type, char *buffer);
+void receive_message(int msgid, long msg_type, Message *message);
 void cleanup_queue(int msgid);
 
 #endif
