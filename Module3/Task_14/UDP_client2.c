@@ -52,6 +52,14 @@ int main() {
         exit(EXIT_FAILURE);
     }
 
+    // Проверка доступности сервера
+    if (connect(client_sock, (struct sockaddr *)&server_addr, sizeof(server_addr)) < 0) {
+        perror("Не удалось подключиться к серверу");
+        close(client_sock);
+        exit(EXIT_FAILURE);
+    }
+    printf("Успешное подключение к серверу\n");
+
     // Ввод имени клиента
     printf("Введите ваше имя: ");
     scanf("%s", client_name);

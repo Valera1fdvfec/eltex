@@ -57,6 +57,28 @@ void *handle_client(void *arg) {
         }
         pthread_mutex_unlock(&client_mutex);
 
+        if (strcmp(buffer, "/exit") == 0) {
+            pthread_mutex_lock(&client_mutex);
+            for (int i = 0; i < client_count; i++) {
+                if (client_addrs[i].sin_addr.s_addr == client_addr.sin_addr.s_addr && client_addrs[i].sin_port == client_addr.sin_port) {
+                    for (int j = i; j < client_count - 1; j++) {
+                        client_addrs[j] = client_addrs[j + 1];
+                    }
+                    client_count--;
+
+                    printf("Клиент с IP: %s:%d покинул чат. Текущее количество клиентов: %d\n", client_ip, client_port, client_count);
+
+                    char leave_message[BUF_SIZE + 50];
+                    snprintf(leave_message, sizeof(leave_message), "Клиент %s:%d покинул чат. Текущее количество клиентов: %d", client_ip, client_port, client_count);
+                    broadcast_message(leave_message, client_addr);
+
+                    break;
+                }
+            }
+            pthread_mutex_unlock(&client_mutex);
+            continue;
+        }
+
         char broadcast_msg[BUF_SIZE + 50];
         snprintf(broadcast_msg, sizeof(broadcast_msg), "%s:%d: %s", client_ip, client_port, buffer);
         broadcast_message(broadcast_msg, client_addr);
@@ -89,6 +111,7 @@ int main() {
     char server_ip[INET_ADDRSTRLEN];
     inet_ntop(AF_INET, &server_addr.sin_addr, server_ip, INET_ADDRSTRLEN);
     printf("Сервер запущен на IP: %s, порт: %d\n", server_ip, PORT);
+    printf("Сервер готов принимать сообщения...\n");
 
     // Создание потока для обработки клиентов
     pthread_t thread_id;

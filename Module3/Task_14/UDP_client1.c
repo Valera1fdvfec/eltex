@@ -52,6 +52,14 @@ int main() {
         exit(EXIT_FAILURE);
     }
 
+    // Проверка доступности сервера
+    if (connect(client_sock, (struct sockaddr *)&server_addr, sizeof(server_addr)) < 0) {
+        perror("Не удалось подключиться к серверу");
+        close(client_sock);
+        exit(EXIT_FAILURE);
+    }
+    printf("Успешное подключение к серверу\n");
+
     // Ввод имени клиента
     printf("Введите ваше имя: ");
     scanf("%s", client_name);
@@ -74,7 +82,7 @@ int main() {
     // Основной цикл отправки сообщений
     char message[BUF_SIZE];
     while (1) {
-        printf("Вdедите ваше сообщение: ");
+        printf("> ");
         fgets(message, BUF_SIZE, stdin);
         message[strcspn(message, "\n")] = 0; // Удаляем символ новой строки
 
