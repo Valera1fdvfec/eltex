@@ -1,13 +1,12 @@
 #include <stdio.h>
+#include <unistd.h>
 #include <stdlib.h>
 #include <string.h>
-#include <unistd.h>
 #include <signal.h>
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
-#include <ifaddrs.h>
 
 #define BUFFER_SIZE 1024
 #define DEFAULT_PORT 2010
@@ -39,28 +38,6 @@ void error(const char *msg) {
     cleanup();
 }
 
-void display_local_ip() {
-    struct ifaddrs *ifaddr, *ifa;
-    char ip[INET_ADDRSTRLEN];
-
-    if (getifaddrs(&ifaddr) == -1) {
-        perror("Ошибка: не удалось получить IP-адреса");
-        return;
-    }
-
-    printf("Сервер запущен на следующих IP-адресах:\n");
-    for (ifa = ifaddr; ifa != NULL; ifa = ifa->ifa_next) {
-        if (ifa->ifa_addr && ifa->ifa_addr->sa_family == AF_INET) {
-            void *addr = &((struct sockaddr_in *)ifa->ifa_addr)->sin_addr;
-            inet_ntop(AF_INET, addr, ip, INET_ADDRSTRLEN);
-            printf("- %s\n", ip);
-        }
-    }
-
-    freeifaddrs(ifaddr);
-}
-
-
 void initialize_server(Server *server, int port) {
     server->sock = socket(AF_INET, SOCK_STREAM, 0);
     if (server->sock < 0) {
@@ -68,7 +45,8 @@ void initialize_server(Server *server, int port) {
     }
 
     int opt = 1;
-    if (setsockopt(server->sock, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt)) < 0) {
+    if (setsockopt(server->sock, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt)) < 0 ||
+        setsockopt(server->sock, SOL_SOCKET, SO_REUSEPORT, &opt, sizeof(opt)) < 0) {
         error("Ошибка: не удалось установить опции сокета");
     }
     
@@ -80,85 +58,8 @@ void initialize_server(Server *server, int port) {
     if (bind(server->sock, (struct sockaddr *) &server->server_addr, sizeof(server->server_addr)) < 0) {
         error("Ошибка: не удалось привязать сокет");
     }
-    display_local_ip();
-    printf("Порт: %d\n", port);
-
-    listen(server->sock,5); 
+    listen(server->sock, 5);
 }
-
-void handle_file_transfer(int newsockfd) {
-    char buffer[BUFFER_SIZE];
-    char filename[BUFFER_SIZE];
-    FILE *file;
-
-    // Получение имени файла
-    bzero(filename, BUFFER_SIZE);
-    if (read(newsockfd, filename, BUFFER_SIZE - 1) <= 0) {
-        perror("Ошибка: не удалось получить имя файла");
-        return;
-    }
-
-    printf("Получен файл: %s\n", filename);
-    file = fopen(filename, "wb");
-    if (!file) {
-        perror("Ошибка: не удалось создать файл");
-        return;
-    }
-
-    // Чтение данных файла
-    while (1) {
-        bzero(buffer, BUFFER_SIZE);
-        int bytes_read = read(newsockfd, buffer, BUFFER_SIZE);
-        if (bytes_read <= 0) {
-            break;
-        }
-        fwrite(buffer, 1, bytes_read, file);
-    }
-
-    printf("Передача файла завершена.\n");
-    fclose(file);
-    snprintf(buffer, BUFFER_SIZE, "Файл считан успешно\n");
-    write(newsockfd, buffer, strlen(buffer));
-}
-
-void handle_calculation(int newsockfd, char *buffer) {
-    char operation;
-    float num1, num2, result;
-
-    if (sscanf(buffer, "%f %c %f", &num1, &operation, &num2) != 3) {
-        snprintf(buffer, BUFFER_SIZE, "Ошибка: неверный формат данных. Используйте: <число> <операция> <число>\n");
-        write(newsockfd, buffer, strlen(buffer));
-        return;
-    }
-	switch (operation) {
-        case '+':
-            result = num1 + num2;
-            break;
-        case '-':
-            result = num1 - num2;
-            break;
-        case '*':
-            result = num1 * num2;
-            break;
-        case '/':
-            if (num2 == 0) {
-                snprintf(buffer, BUFFER_SIZE, "Ошибка: деление на 0\n");
-                write(newsockfd, buffer, strlen(buffer));
-                return;
-            }
-            result = num1 / num2;
-            break;
-        default:
-            snprintf(buffer, BUFFER_SIZE, "Ошибка: неизвестная операция '%c'\n", operation);
-            write(newsockfd, buffer, strlen(buffer));
-            return;
-    }
-
-    snprintf(buffer, BUFFER_SIZE, "Результат: %.2f\n", result);
-    write(newsockfd, buffer, strlen(buffer));
-}
-
-
 
 void handle_client(int newsockfd, struct sockaddr_in client_addr) {
     char buffer[BUFFER_SIZE];
@@ -174,19 +75,92 @@ void handle_client(int newsockfd, struct sockaddr_in client_addr) {
             break;
         }
 
-        if (n == 0) {
+        if (n == 0) {  // Клиент закрыл соединение
             printf("Клиент закрыл соединение.\n");
             break;
         }
 
-        printf("Клиент отправил: %s\n", buffer);
-
+        // Если клиент выбрал отправку файла
         if (strncmp(buffer, "FILE", 4) == 0) {
-            handle_file_transfer(newsockfd);
-            break;
+            FILE *file = fopen("new_file.txt", "wb");
+            if (file == NULL) {
+                snprintf(buffer, BUFFER_SIZE, "Ошибка при создании файла\n");
+                write(newsockfd, buffer, strlen(buffer));
+                continue;
+            }
+
+            int file_size;
+            read(newsockfd, &file_size, sizeof(file_size)); // Читаем размер файла
+            char *file_buffer = malloc(file_size);
+
+            if (file_buffer == NULL) {
+                snprintf(buffer, BUFFER_SIZE, "Ошибка выделения памяти\n");
+                write(newsockfd, buffer, strlen(buffer));
+                continue;
+            }
+
+            read(newsockfd, file_buffer, file_size);
+
+            // Убираем нулевые байты и слэши из данных
+            for (int i = 0; i < file_size; ++i) {
+                if (file_buffer[i] == '\0' || file_buffer[i] == '/') {
+                    file_buffer[i] = ' ';
+                }
+            }
+
+            fwrite(file_buffer, 1, file_size, file);
+            fclose(file);
+
+            // Логируем в консоль
+            printf("Файл успешно получен от клиента: %s:%d\n", inet_ntoa(client_addr.sin_addr), ntohs(client_addr.sin_port));
+
+            snprintf(buffer, BUFFER_SIZE, "Файл успешно получен и сохранен\n");
+            write(newsockfd, buffer, strlen(buffer));
+            free(file_buffer);
+            continue;  // После получения файла продолжаем вычисления
         }
 
-	handle_calculation(newsockfd, buffer);
+        // Математические операции
+        char operation;
+        float num1, num2;
+        if (sscanf(buffer, "%f %c %f", &num1, &operation, &num2) != 3) {
+            snprintf(buffer, BUFFER_SIZE, "Ошибка: неверный формат данных\n");
+            write(newsockfd, buffer, strlen(buffer));
+            continue;
+        }
+
+        float result = 0.0;
+        switch (operation) {
+            case '+':
+                result = num1 + num2;
+                break;
+            case '-':
+                result = num1 - num2;
+                break;
+            case '*':
+                result = num1 * num2;
+                break;
+            case '/':
+                if (num2 != 0) {
+                    result = num1 / num2;
+                } else {
+                    snprintf(buffer, BUFFER_SIZE, "Ошибка: деление на ноль\n");
+                    write(newsockfd, buffer, strlen(buffer));
+                    continue;
+                }
+                break;
+            default:
+                snprintf(buffer, BUFFER_SIZE, "Ошибка: неизвестная операция\n");
+                write(newsockfd, buffer, strlen(buffer));
+                continue;
+        }
+
+        snprintf(buffer, BUFFER_SIZE, "Результат: %.2f\n", result);
+        printf("Сервер отправил: %s\n", buffer);
+        n = write(newsockfd, buffer, strlen(buffer));
+        if (n < 0) {
+            perror("Ошибка: не удалось отправить данные клиенту");
+        }
     }
 
     close(newsockfd);
@@ -195,6 +169,7 @@ void handle_client(int newsockfd, struct sockaddr_in client_addr) {
 
 int main(int argc, char *argv[]) {
     int port = (argc < 2) ? DEFAULT_PORT : atoi(argv[1]);
+    printf("Запуск сервера на порту %d\n", port);
 
     signal(SIGINT, signal_handler); // Установка обработчика сигнала SIGINT
     initialize_server(&server, port);

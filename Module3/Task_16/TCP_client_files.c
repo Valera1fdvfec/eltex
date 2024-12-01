@@ -39,40 +39,6 @@ void initialize_client(Client *client, const char *hostname, int port) {
     client->server_addr.sin_port = htons(port);
 }
 
-void send_file(Client *client) {
-    char buffer[BUFFER_SIZE];
-    char filename[BUFFER_SIZE];
-    FILE *file;
-
-    printf("Введите имя файла для отправки: ");
-    fgets(filename, BUFFER_SIZE - 1, stdin);
-    filename[strcspn(filename, "\n")] = 0;
-
-    file = fopen(filename, "rb");
-    if (!file) {
-        perror("Ошибка: не удалось открыть файл");
-        return;
-    }
-
-    // Отправляем команду FILE
-    snprintf(buffer, BUFFER_SIZE, "FILE");
-    write(client->sock, buffer, strlen(buffer));
-
-    // Отправляем имя файла
-    write(client->sock, filename, strlen(filename) + 1);
-
-    // Отправляем данные файла
-    while (!feof(file)) {
-        int bytes_read = fread(buffer, 1, BUFFER_SIZE, file);
-        if (bytes_read > 0) {
-            write(client->sock, buffer, bytes_read);
-        }
-    }
-
-    printf("Файл отправлен.\n");
-    fclose(file);
-}
-
 void communicate(Client *client) {
     char buffer[BUFFER_SIZE];
     int n;
@@ -82,26 +48,87 @@ void communicate(Client *client) {
     }
 
     while (1) {
-        printf("Введите команду (например, FILE или сообщение): ");
+        // Выводим меню
+        printf("\nВыберите действие:\n");
+        printf("1. Ввести математическое выражение (например, 5 + 3)\n");
+        printf("2. Отправить файл на сервер\n");
+        printf("0. Выйти\n");
+        printf("Ваш выбор: ");
+        
         bzero(buffer, BUFFER_SIZE);
         fgets(buffer, BUFFER_SIZE - 1, stdin);
-
-        if (strncmp(buffer, "FILE", 4) == 0) {
-            send_file(client);
-            continue;
+        
+        if (strncmp(buffer, "0", 1) == 0) {
+            printf("Завершаем соединение...\n");
+            break;
         }
 
-        n = write(client->sock, buffer, strlen(buffer));
-        if (n < 0) {
-            error("Ошибка: не удалось отправить данные");
-        }
+        if (strncmp(buffer, "1", 1) == 0) {
+            // Ввод математического выражения
+            printf("Введите математическое выражение (например, 5 + 3): ");
+            bzero(buffer, BUFFER_SIZE);
+            fgets(buffer, BUFFER_SIZE - 1, stdin);
 
-        bzero(buffer, BUFFER_SIZE);
-        n = read(client->sock, buffer, BUFFER_SIZE - 1);
-        if (n < 0) {
-            error("Ошибка: не удалось получить данные");
+            n = write(client->sock, buffer, strlen(buffer));
+            if (n < 0) {
+                error("Ошибка: не удалось отправить данные");
+            }
+
+            bzero(buffer, BUFFER_SIZE);
+            n = read(client->sock, buffer, BUFFER_SIZE - 1);
+            if (n < 0) {
+                error("Ошибка: не удалось получить данные");
+            }
+            printf("Результат: %s\n", buffer);
+
+        } else if (strncmp(buffer, "2", 1) == 0) {
+            // Отправка файла на сервер
+            printf("Введите путь к файлу для отправки: ");
+            bzero(buffer, BUFFER_SIZE);
+            fgets(buffer, BUFFER_SIZE - 1, stdin);
+            buffer[strcspn(buffer, "\n")] = 0; // Убираем лишний символ новой строки
+
+            FILE *file = fopen(buffer, "rb");
+            if (file == NULL) {
+                printf("Ошибка: не удалось открыть файл\n");
+                continue;
+            }
+
+            // Отправляем команду на сервер о передаче файла
+            write(client->sock, "FILE", 4);
+            
+            // Отправка размера файла
+            fseek(file, 0, SEEK_END);
+            long file_size = ftell(file);
+            rewind(file);
+            write(client->sock, &file_size, sizeof(file_size));
+
+            // Чтение файла и отправка данных
+            char *file_buffer = malloc(file_size);
+            fread(file_buffer, 1, file_size, file);
+
+            // Убираем нулевые байты и слэши
+            for (int i = 0; i < file_size; ++i) {
+                if (file_buffer[i] == '\0' || file_buffer[i] == '/') {
+                    file_buffer[i] = ' ';
+                }
+            }
+
+            write(client->sock, file_buffer, file_size);
+
+            // Ожидаем ответа от сервера
+            bzero(buffer, BUFFER_SIZE);
+            n = read(client->sock, buffer, BUFFER_SIZE - 1);
+            if (n < 0) {
+                error("Ошибка: не удалось получить данные");
+            }
+            printf("Ответ от сервера: %s\n", buffer);
+            
+            free(file_buffer);
+            fclose(file);
+        } else {
+            printf("Неверный выбор. Пожалуйста, попробуйте снова.\n");
         }
-        printf("Ответ сервера: %s\n", buffer);
     }
 
     close(client->sock);
