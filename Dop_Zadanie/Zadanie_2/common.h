@@ -1,0 +1,19 @@
+#ifndef COMMON_H
+#define COMMON_H
+
+#define MAX_DRIVERS 100
+#define MSG_SIZE 128
+
+typedef enum {
+    AVAILABLE,
+    BUSY
+} DriverStatus;
+
+typedef struct {
+    int pid;
+    DriverStatus status;
+    int pipe_fd[2]; // [0] - read, [1] - write (cli <-> driver)
+    int task_end_time; // seconds remaining
+} DriverInfo;
+
+#endif
