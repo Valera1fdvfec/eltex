@@ -16,4 +16,16 @@ typedef struct {
     int task_end_time; // seconds remaining
 } DriverInfo;
 
+// Глобальные переменные
+extern DriverInfo drivers[MAX_DRIVERS];
+extern int driver_count;
+
+// Объявления функций
+void create_driver(void);
+void send_task(int pid, int time);
+void get_status(int pid);
+void get_drivers(void);
+DriverInfo* find_driver(int pid);
+void update_status(DriverInfo* d);
+
 #endif
