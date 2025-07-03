@@ -1,5 +1,4 @@
 #include "server.h"
-
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -8,11 +7,11 @@
 #include <netinet/ip.h>
 #include <netinet/udp.h>
 #include <sys/socket.h>
-#include <signal.h>
 
-// Глобальные переменные для сокета и адреса сервера
-static int sockfd = -1; // Дескриптор сокета
-static struct sockaddr_in dest; // Адрес сервера
+// Глобальные переменные для сокета, адреса сервера и порта клиента
+int sockfd = -1; // Дескриптор сокета
+struct sockaddr_in dest; // Адрес сервера
+int client_port; // Порт клиента
 
 // Функция отправки сообщения "exit" серверу при завершении
 void send_exit_message(void) {
@@ -36,14 +35,14 @@ void send_exit_message(void) {
     ip->frag_off = 0;
     ip->ttl = 64;
     ip->protocol = IPPROTO_UDP;
-    ip->saddr = inet_addr("127.0.0.1"); // Локальный IP
+    ip->saddr = INADDR_ANY; 
     ip->daddr = dest.sin_addr.s_addr; // IP сервера
     ip->check = 0;
     ip->check = checksum((unsigned short *)ip, sizeof(struct ip_header)/2); // Вычисляем контрольную сумму IP
 
     // Заполняем UDP-заголовок
-    udp->source = htons(CLIENT_PORT); // Порт клиента
-    udp->dest = htons(SERVER_PORT); // Порт сервера
+    udp->source = htons(client_port); // Порт клиента из аргумента
+    udp->dest = dest.sin_port; // Порт сервера
     udp->len = htons(sizeof(struct udp_header) + payload_len);
     udp->check = 0;
     udp->check = udp_checksum(ip, udp, (unsigned char *)data, payload_len); // Контрольная сумма UDP
@@ -51,7 +50,7 @@ void send_exit_message(void) {
     // Настраиваем адрес для отправки
     struct sockaddr_in to_addr;
     to_addr.sin_family = AF_INET;
-    to_addr.sin_port = htons(SERVER_PORT);
+    to_addr.sin_port = dest.sin_port;
     to_addr.sin_addr = dest.sin_addr;
 
     // Отправляем пакет
@@ -64,19 +63,98 @@ void send_exit_message(void) {
     }
 }
 
-// Обработчик сигнала Ctrl+C
-void signal_handler(int sig) {
-    send_exit_message(); // Отправляем "exit"
-    close(sockfd); // Закрываем сокет
-    exit(0); // Завершаем программу
+// Функция для отправки сообщения серверу
+int send_message(const char *input, int payload_len) {
+    unsigned char packet[4096]; // Буфер для отправляемого пакета
+    struct ip_header *ip = (struct ip_header *)packet;
+    struct udp_header *udp = (struct udp_header *)(packet + sizeof(struct ip_header));
+    char *data = (char *)(packet + sizeof(struct ip_header) + sizeof(struct udp_header));
+
+    memcpy(data, input, payload_len); // Копируем сообщение в пакет
+
+    // Заполняем IP-заголовок
+    ip->version = 4;
+    ip->ihl = 5;
+    ip->tos = 0;
+    ip->tot_len = htons(sizeof(struct ip_header) + sizeof(struct udp_header) + payload_len);
+    ip->id = htons(12345);
+    ip->frag_off = 0;
+    ip->ttl = 64;
+    ip->protocol = IPPROTO_UDP;
+    ip->saddr = INADDR_ANY; // Ядро выберет локальный IP
+    ip->daddr = dest.sin_addr.s_addr; // IP сервера
+    ip->check = 0;
+    ip->check = checksum((unsigned short *)ip, sizeof(struct ip_header)/2);
+
+    // Заполняем UDP-заголовок
+    udp->source = htons(client_port); // Порт клиента из аргумента
+    udp->dest = dest.sin_port; // Порт сервера
+    udp->len = htons(sizeof(struct udp_header) + payload_len);
+    udp->check = 0;
+    udp->check = udp_checksum(ip, udp, (unsigned char *)data, payload_len);
+
+    // Настраиваем адрес для отправки
+    struct sockaddr_in to_addr;
+    to_addr.sin_family = AF_INET;
+    to_addr.sin_port = dest.sin_port;
+    to_addr.sin_addr = dest.sin_addr;
+
+    // Отправляем пакет
+    ssize_t sent = sendto(sockfd, packet, sizeof(struct ip_header) + sizeof(struct udp_header) + payload_len,
+                          0, (struct sockaddr *)&to_addr, sizeof(to_addr));
+    if (sent < 0) {
+        perror("sendto");
+        return -1;
+    }
+    printf("Message sent: %s\n", input);
+    return 0;
 }
 
-int main() {
-    // Создаем сырой сокет для UDP
+// Функция для получения ответа от сервера
+int receive_response(void) {
+    unsigned char buffer[4096]; // Буфер для ответа
+    struct sockaddr_in from_addr;
+    socklen_t from_len = sizeof(from_addr);
+
+    while (1) {
+        ssize_t len = recvfrom(sockfd, buffer, sizeof(buffer), 0, (struct sockaddr *)&from_addr, &from_len);
+        if (len < 0) {
+            perror("recvfrom");
+            return -1;
+        }
+
+        struct ip_header *rip = (struct ip_header *)buffer;
+        if (rip->protocol != IPPROTO_UDP) continue; // Пропускаем не-UDP пакеты
+
+        int iphdrlen = rip->ihl * 4;
+        struct udp_header *rupd = (struct udp_header *)(buffer + iphdrlen);
+
+        // Проверяем, что ответ от сервера и на наш порт
+        if (rupd->source != dest.sin_port || rupd->dest != htons(client_port))
+            continue;
+
+        int datalen = ntohs(rupd->len) - sizeof(struct udp_header);
+        if (datalen <= 0) continue;
+
+        char *rdata = (char *)(buffer + iphdrlen + sizeof(struct udp_header));
+
+        // Копируем ответ с добавлением '\0'
+        char safe[1024];
+        if (datalen > 1023) datalen = 1023;
+        memcpy(safe, rdata, datalen);
+        safe[datalen] = '\0';
+
+        printf("Received response: %s\n", safe);
+        return 0;
+    }
+}
+
+// Функция инициализации сокета и адреса сервера
+int init_client(const char *server_ip, int client_port_arg) {
     sockfd = socket(AF_INET, SOCK_RAW, IPPROTO_UDP);
     if (sockfd < 0) {
         perror("socket");
-        exit(1);
+        return -1;
     }
 
     // Включаем ручное заполнение IP-заголовка
@@ -84,112 +162,20 @@ int main() {
     if (setsockopt(sockfd, IPPROTO_IP, IP_HDRINCL, &one, sizeof(one)) < 0) {
         perror("setsockopt");
         close(sockfd);
-        exit(1);
+        return -1;
     }
 
     // Настраиваем адрес сервера
     dest.sin_family = AF_INET;
-    dest.sin_port = htons(SERVER_PORT);
-    inet_aton("127.0.0.1", &dest.sin_addr);
-
-    // Регистрируем обработчики для завершения программы
-    atexit(send_exit_message); // При нормальном завершении
-    signal(SIGINT, signal_handler); // При Ctrl+C
-
-    char input[1024]; // Буфер для ввода сообщения
-    unsigned char packet[4096]; // Буфер для отправляемого пакета
-
-    while (1) {
-        printf("Enter message: ");
-        fflush(stdout);
-        if (!fgets(input, sizeof(input), stdin)) break; // Читаем ввод
-
-        input[strcspn(input, "\n")] = 0; // Удаляем '\n'
-        int payload_len = strlen(input);
-        if (payload_len == 0) continue; // Пропускаем пустой ввод
-
-        // Формируем пакет
-        struct ip_header *ip = (struct ip_header *)packet;
-        struct udp_header *udp = (struct udp_header *)(packet + sizeof(struct ip_header));
-        char *data = (char *)(packet + sizeof(struct ip_header) + sizeof(struct udp_header));
-
-        memcpy(data, input, payload_len); // Копируем сообщение в пакет
-
-        // Заполняем IP-заголовок
-        ip->version = 4;
-        ip->ihl = 5;
-        ip->tos = 0;
-        ip->tot_len = htons(sizeof(struct ip_header) + sizeof(struct udp_header) + payload_len);
-        ip->id = htons(12345);
-        ip->frag_off = 0;
-        ip->ttl = 64;
-        ip->protocol = IPPROTO_UDP;
-        ip->saddr = inet_addr("127.0.0.1");
-        ip->daddr = dest.sin_addr.s_addr;
-        ip->check = 0;
-        ip->check = checksum((unsigned short *)ip, sizeof(struct ip_header)/2);
-
-        // Заполняем UDP-заголовок
-        udp->source = htons(CLIENT_PORT);
-        udp->dest = htons(SERVER_PORT);
-        udp->len = htons(sizeof(struct udp_header) + payload_len);
-        udp->check = 0;
-        udp->check = udp_checksum(ip, udp, (unsigned char *)data, payload_len);
-
-        // Настраиваем адрес для отправки
-        struct sockaddr_in to_addr;
-        to_addr.sin_family = AF_INET;
-        to_addr.sin_port = htons(SERVER_PORT);
-        to_addr.sin_addr = dest.sin_addr;
-
-        // Отправляем пакет
-        ssize_t sent = sendto(sockfd, packet, sizeof(struct ip_header) + sizeof(struct udp_header) + payload_len,
-                              0, (struct sockaddr *)&to_addr, sizeof(to_addr));
-        if (sent < 0) {
-            perror("sendto");
-            continue;
-        }
-        printf("Message sent: %s\n", input);
-
-        // Ожидаем ответа от сервера
-        while (1) {
-            unsigned char buffer[4096]; // Буфер для ответа
-            struct sockaddr_in from_addr;
-            socklen_t from_len = sizeof(from_addr);
-
-            ssize_t len = recvfrom(sockfd, buffer, sizeof(buffer), 0, (struct sockaddr *)&from_addr, &from_len);
-            if (len < 0) {
-                perror("recvfrom");
-                continue;
-            }
-
-            struct ip_header *rip = (struct ip_header *)buffer;
-            if (rip->protocol != IPPROTO_UDP) continue; // Пропускаем не-UDP пакеты
-
-            int iphdrlen = rip->ihl * 4;
-            struct udp_header *rupd = (struct udp_header *)(buffer + iphdrlen);
-
-            // Проверяем, что ответ от сервера и на наш порт
-            if (rupd->source != htons(SERVER_PORT) || rupd->dest != htons(CLIENT_PORT))
-                continue;
-
-            int datalen = ntohs(rupd->len) - sizeof(struct udp_header);
-            if (datalen <= 0) continue;
-
-            char *rdata = (char *)(buffer + iphdrlen + sizeof(struct udp_header));
-
-            // Копируем ответ с добавлением '\0'
-            char safe[1024];
-            if (datalen > 1023) datalen = 1023;
-            memcpy(safe, rdata, datalen);
-            safe[datalen] = '\0';
-
-            printf("Received response: %s\n", safe);
-            break;
-        }
+    dest.sin_port = htons(SERVER_PORT); // Фиксированный порт сервера
+    if (inet_aton(server_ip, &dest.sin_addr) == 0) {
+        fprintf(stderr, "Invalid server IP address: %s\n", server_ip);
+        close(sockfd);
+        return -1;
     }
 
-    send_exit_message(); 
-    close(sockfd); // Закрываем сокет
+    // Сохраняем порт клиента
+    client_port = client_port_arg;
+
     return 0;
 }
